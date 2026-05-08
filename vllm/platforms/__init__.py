@@ -315,8 +315,20 @@ def __getattr__(name: str):
         #    see the test failures).
         global _current_platform
         if _current_platform is None:
-            platform_cls_qualname = resolve_current_platform_cls_qualname()
-            _current_platform = resolve_obj_by_qualname(platform_cls_qualname)()
+            # Sentinel to break recursion: rocm.py / cuda.py module init may
+            # transitively `from vllm.platforms import current_platform` (via
+            # vllm.utils.system_utils), re-entering this __getattr__ before
+            # _current_platform is set. The sentinel returns a temporary
+            # UnspecifiedPlatform stub for the inner call so the import chain
+            # completes; the outer call then assigns the real platform.
+            from .interface import UnspecifiedPlatform
+            _current_platform = UnspecifiedPlatform()
+            try:
+                platform_cls_qualname = resolve_current_platform_cls_qualname()
+                _current_platform = resolve_obj_by_qualname(platform_cls_qualname)()
+            except Exception:
+                _current_platform = None
+                raise
             global _init_trace
             _init_trace = "".join(traceback.format_stack())
         return _current_platform
