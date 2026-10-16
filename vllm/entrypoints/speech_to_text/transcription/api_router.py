@@ -6,7 +6,7 @@ from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from vllm.entrypoints.serve.utils.api_utils import (
     load_aware_call,
@@ -31,7 +31,13 @@ def transcription(request: Request) -> OpenAIServingTranscription:
 @router.post(
     "/v1/audio/transcriptions",
     responses={
-        HTTPStatus.OK.value: {"content": {"text/event-stream": {}}},
+        HTTPStatus.OK.value: {
+            "content": {
+                "application/json": {},
+                "text/plain": {},
+                "text/event-stream": {},
+            }
+        },
         HTTPStatus.BAD_REQUEST.value: {"model": ErrorResponse},
         HTTPStatus.UNPROCESSABLE_ENTITY.value: {"model": ErrorResponse},
         HTTPStatus.INTERNAL_SERVER_ERROR.value: {"model": ErrorResponse},
@@ -56,6 +62,8 @@ async def create_transcriptions(
         )
 
     elif isinstance(generator, TranscriptionResponseVariant):
+        if request.response_format == "text":
+            return PlainTextResponse(content=generator.text)
         return JSONResponse(content=generator.model_dump())
 
     return StreamingResponse(content=generator, media_type="text/event-stream")
