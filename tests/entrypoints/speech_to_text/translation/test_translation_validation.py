@@ -136,7 +136,7 @@ async def test_basic_audio_with_lora(mary_had_lamb):
             response_format="text",
             temperature=0.0,
         )
-    out = json.loads(translation)["text"].strip().lower()
+    out = translation.strip().lower()
     assert "pequeño" in out.split(" ")
 
 
@@ -152,7 +152,7 @@ async def test_basic_audio(foscolo, client_and_model):
         extra_body=dict(language="it", to_language="en"),
         temperature=0.0,
     )
-    out = json.loads(translation)["text"].strip().lower()
+    out = translation.strip().lower()
     assert "greek sea" in out
 
 
@@ -169,7 +169,7 @@ async def test_audio_prompt(foscolo, client_and_model):
         response_format="text",
         temperature=0.0,
     )
-    out = json.loads(transcription)["text"]
+    out = transcription
     assert "Nor will I ever touch the sacred" not in out
     assert prompt not in out
 
@@ -283,7 +283,7 @@ async def test_long_audio_request(foscolo, client_and_model):
         response_format="text",
         temperature=0.0,
     )
-    out = json.loads(translation)["text"].strip().lower()
+    out = translation.strip().lower()
     assert out.count("greek sea") == 2
 
 
@@ -297,8 +297,7 @@ async def test_audio_with_max_tokens(mary_had_lamb, client_and_model):
         temperature=0.0,
         extra_body={"max_completion_tokens": 1},
     )
-    out = json.loads(transcription)
-    out_text = out["text"]
+    out_text = transcription
     print(out_text)
     from transformers import AutoTokenizer
 
@@ -317,8 +316,7 @@ async def test_audio_with_max_tokens(mary_had_lamb, client_and_model):
             "repetition_penalty": 1.3,
         },
     )
-    out = json.loads(transcription)
-    out_text = out["text"]
+    out_text = transcription
     print(out_text)
     out_tokens = tok(out_text, add_special_tokens=False)["input_ids"]
     assert len(out_tokens) < 450  # ~Whisper max output len

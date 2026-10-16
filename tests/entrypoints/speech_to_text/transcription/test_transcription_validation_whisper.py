@@ -4,7 +4,6 @@
 # imports for structured outputs tests
 import asyncio
 import io
-import json
 
 import numpy as np
 import openai
@@ -87,10 +86,10 @@ async def test_basic_audio(whisper_client, mary_had_lamb):
         model=MODEL_NAME,
         file=mary_had_lamb,
         language="en",
-        response_format="text",
+        response_format="json",
         temperature=0.0,
     )
-    out = json.loads(transcription)
+    out = transcription.model_dump()
     out_text = out["text"]
     out_usage = out["usage"]
     assert "Mary had a little lamb," in out_text
@@ -115,12 +114,8 @@ async def test_basic_audio_batched(mary_had_lamb, winning_call, whisper_client):
     )
     # Await both transcriptions by scheduling coroutines together
     transcription, transcription2 = await asyncio.gather(transcription, transcription2)
-    out = json.loads(transcription)
-    out_text = out["text"]
-    assert "Mary had a little lamb," in out_text
-    out2 = json.loads(transcription2)
-    out_text2 = out2["text"]
-    assert "Edgar Martinez" in out_text2
+    assert "Mary had a little lamb," in transcription
+    assert "Edgar Martinez" in transcription2
 
 
 @pytest.mark.asyncio
@@ -147,10 +142,10 @@ async def test_long_audio_request(mary_had_lamb, whisper_client):
         model=MODEL_NAME,
         file=buffer,
         language="en",
-        response_format="text",
+        response_format="json",
         temperature=0.0,
     )
-    out = json.loads(transcription)
+    out = transcription.model_dump()
     out_text = out["text"]
     out_usage = out["usage"]
     counts = out_text.count("Mary had a little lamb")
@@ -280,8 +275,7 @@ async def test_audio_prompt(mary_had_lamb, whisper_client):
         response_format="text",
         temperature=0.0,
     )
-    out = json.loads(transcription)["text"]
-    assert prefix in out
+    assert prefix in transcription
     transcription_wprompt = await whisper_client.audio.transcriptions.create(
         model=MODEL_NAME,
         file=mary_had_lamb,
@@ -290,8 +284,7 @@ async def test_audio_prompt(mary_had_lamb, whisper_client):
         prompt=prompt,
         temperature=0.0,
     )
-    out_prompt = json.loads(transcription_wprompt)["text"]
-    assert prefix in out_prompt
+    assert prefix in transcription_wprompt
 
 
 @pytest.mark.asyncio
@@ -319,8 +312,7 @@ async def test_audio_with_max_tokens(whisper_client, mary_had_lamb):
         temperature=0.0,
         extra_body={"max_completion_tokens": 1},
     )
-    out = json.loads(transcription)
-    out_text = out["text"]
+    out_text = transcription
     from transformers import AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(MODEL_NAME)
@@ -335,8 +327,7 @@ async def test_audio_with_max_tokens(whisper_client, mary_had_lamb):
         temperature=0.0,
         extra_body={"max_completion_tokens": int(1e6)},
     )
-    out = json.loads(transcription)
-    out_text = out["text"]
+    out_text = transcription
     out_tokens = tok(out_text, add_special_tokens=False)["input_ids"]
     assert len(out_tokens) < 450  # ~Whisper max output len
 
@@ -392,9 +383,7 @@ async def test_whisper_beam_search_single_beam(mary_had_lamb, whisper_client):
         temperature=0.0,
     )
 
-    greedy_res = json.loads(greedy_transcription)["text"]
-    beam_res = json.loads(beam_transcription)["text"]
-    assert greedy_res == beam_res
+    assert greedy_transcription == beam_transcription
 
 
 @pytest.mark.asyncio
@@ -412,13 +401,8 @@ async def test_whisper_beam_search_multibeam(mary_had_lamb, whisper_client):
         ),
     )
 
-    result = json.loads(transcription)
-
-    text = result["text"]
-
-    assert text is not None
-    assert len(text) > 0
-    assert "mary had a little lamb" in text.lower()
+    assert len(transcription) > 0
+    assert "mary had a little lamb" in transcription.lower()
 
 
 @pytest.mark.asyncio

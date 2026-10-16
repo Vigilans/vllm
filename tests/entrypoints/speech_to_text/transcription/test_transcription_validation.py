@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-# imports for structured outputs tests
-import json
-
 import pytest
 
 from tests.utils import ROCM_EXTRA_ARGS, RemoteOpenAIServer
@@ -37,10 +34,10 @@ async def transcribe_and_check(
         model=model_name,
         file=file,
         language=language,
-        response_format="text",
+        response_format="json",
         temperature=0.0,
     )
-    out = json.loads(transcription)
+    out = transcription.model_dump()
     out_text = out["text"]
     out_usage = out["usage"]
 
