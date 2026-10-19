@@ -76,7 +76,11 @@ def test_chunked_scores_match_full_batch(logprobs_mode: str):
     idx_mapping_np = np.array([7, 2, 9, 1], dtype=np.int32)
     input_batch = _make_input_batch(cu_num_logits_np, idx_mapping_np, device)
     rejection_sampler = _make_rejection_sampler(
-        SimpleNamespace(logprobs_mode=logprobs_mode, return_sampling_mask=False),
+        SimpleNamespace(
+            logprobs_mode=logprobs_mode,
+            return_sampling_mask=False,
+            logprob_token_ids_state=None,
+        ),
         num_speculative_steps=3,
     )
 
@@ -107,7 +111,7 @@ def test_chunked_scores_match_full_batch(logprobs_mode: str):
             draft_sampled=torch.arange(10, device=device),
             pos=torch.arange(10, device=device),
             max_chunk_logits=5,
-            max_num_logprobs=2,
+            logprobs_dims=(2, 0),
         )
     )
     score_logits = logits + 1 if logprobs_mode in PROCESSED_LOGPROBS_MODES else logits
@@ -117,7 +121,8 @@ def test_chunked_scores_match_full_batch(logprobs_mode: str):
         score_logits,
         input_batch.cu_num_logits,
         input_batch.cu_num_logits_np,
-        max_num_logprobs=2,
+        input_batch.expanded_idx_mapping,
+        logprobs_dims=(2, 0),
     )
 
     assert sampled[:, 0].tolist() == idx_mapping_np.tolist()
@@ -138,6 +143,76 @@ def test_chunked_scores_match_full_batch(logprobs_mode: str):
         == full_logprobs.cu_num_generated_tokens
     )
     assert sampling_mask_tensors is None
+
+
+@pytest.mark.skipif(not current_platform.is_cuda(), reason="Requires CUDA")
+@pytest.mark.parametrize("logprobs_mode", get_args(LogprobsMode))
+def test_verified_rows_score_logprob_token_ids(logprobs_mode: str):
+    device = torch.device("cuda")
+    cu_num_logits_np = np.array([0, 3, 4, 8, 10], dtype=np.int32)
+    idx_mapping_np = np.array([7, 2, 9, 1], dtype=np.int32)
+    input_batch = _make_input_batch(cu_num_logits_np, idx_mapping_np, device)
+    token_ids_by_req = {7: [3, 5], 2: [], 9: [11], 1: []}
+    num_token_ids = torch.zeros(10, dtype=torch.int32, device=device)
+    token_ids = torch.zeros((10, 2), dtype=torch.int32, device=device)
+    for req_idx, req_token_ids in token_ids_by_req.items():
+        num_token_ids[req_idx] = len(req_token_ids)
+        token_ids[req_idx, : len(req_token_ids)] = torch.tensor(req_token_ids)
+    rejection_sampler = _make_rejection_sampler(
+        SimpleNamespace(
+            logprobs_mode=logprobs_mode,
+            return_sampling_mask=False,
+            logprob_token_ids_state=SimpleNamespace(
+                num_token_ids=SimpleNamespace(gpu=num_token_ids),
+                token_ids=SimpleNamespace(gpu=token_ids),
+            ),
+        ),
+        num_speculative_steps=3,
+    )
+
+    def fake_verify(
+        self,
+        logits,
+        _draft_logits,
+        _draft_sampled,
+        _pos,
+        cu_num_logits,
+        *_mappings,
+    ):
+        num_sampled = torch.diff(cu_num_logits).to(torch.int32)
+        sampled = torch.zeros(
+            (num_sampled.shape[0], 4), dtype=torch.int64, device=device
+        )
+        return logits.float() + 1, sampled, num_sampled
+
+    rejection_sampler._verify = MethodType(fake_verify, rejection_sampler)
+    logits = torch.randn(10, 17, device=device)
+
+    _, _, logprobs, _ = rejection_sampler._verify_in_chunks(
+        logits,
+        input_batch,
+        draft_logits=None,
+        draft_sampled=torch.arange(10, device=device),
+        pos=torch.arange(10, device=device),
+        max_chunk_logits=5,
+        logprobs_dims=(0, 2),
+    )
+
+    assert logprobs is not None
+    score_logits = logits + 1 if logprobs_mode in PROCESSED_LOGPROBS_MODES else logits
+    if logprobs_mode not in ("raw_logits", "processed_logits"):
+        score_logits = torch.log_softmax(score_logits, dim=-1)
+    for req, req_idx in enumerate(idx_mapping_np):
+        token_ids = token_ids_by_req[int(req_idx)]
+        for row in range(cu_num_logits_np[req], cu_num_logits_np[req + 1]):
+            row_token_ids = logprobs.logprob_token_ids[row, 1:].tolist()
+            row_logprobs = logprobs.logprobs[row, 1:]
+            assert row_token_ids[: len(token_ids)] == token_ids
+            torch.testing.assert_close(
+                row_logprobs[: len(token_ids)], score_logits[row, token_ids]
+            )
+            assert torch.all(row_logprobs[len(token_ids) :] == float("-inf"))
+    assert logprobs.cu_num_generated_tokens == cu_num_logits_np.tolist()
 
 
 @pytest.mark.skipif(not current_platform.is_cuda(), reason="Requires CUDA")
@@ -164,6 +239,7 @@ def test_replay_on_off_preserves_rejection_sampling_and_rng(monkeypatch):
     sampler = SimpleNamespace(
         logprobs_mode="processed_logprobs",
         return_sampling_mask=False,
+        logprob_token_ids_state=None,
         sampling_states=SimpleNamespace(
             top_k=SimpleNamespace(np=np.full(num_reqs, vocab_size)),
             temperature=SimpleNamespace(gpu=torch.ones(num_reqs, device=device)),
@@ -215,7 +291,7 @@ def test_replay_on_off_preserves_rejection_sampling_and_rng(monkeypatch):
             draft_sampled,
             pos,
             max_chunk_logits=8,
-            max_num_logprobs=0,
+            logprobs_dims=(0, 0),
         )
     )
     rng_after_off = torch.cuda.get_rng_state()
@@ -229,7 +305,7 @@ def test_replay_on_off_preserves_rejection_sampling_and_rng(monkeypatch):
         draft_sampled,
         pos,
         max_chunk_logits=8,
-        max_num_logprobs=0,
+        logprobs_dims=(0, 0),
     )
     rng_after_on = torch.cuda.get_rng_state()
 
